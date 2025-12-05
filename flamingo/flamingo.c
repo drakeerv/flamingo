@@ -165,12 +165,9 @@ void flamingo_destroy(flamingo_t* flamingo) {
 
 	if (!flamingo->inherited_env) {
 		for (size_t i = 0; i < flamingo->env->scope_stack_size; i++) {
-			scope_free(flamingo->env->scope_stack[i]);
+			scope_clear(flamingo->env->scope_stack[i]);
 		}
-
-		if (flamingo->env->scope_stack != NULL) {
-			free(flamingo->env->scope_stack);
-		}
+		env_free(flamingo->env);
 	}
 
 	// If we imported anything, free all the created flamingo instances and their sources.
@@ -325,4 +322,44 @@ flamingo_val_t* flamingo_val_make_bool(bool boolean) {
 	val->boolean.boolean = boolean;
 
 	return val;
+}
+
+void val_free(flamingo_val_t* val) {
+	if (val->kind == FLAMINGO_VAL_KIND_STR) {
+		free(val->str.str);
+	}
+
+	if (val->kind == FLAMINGO_VAL_KIND_VEC) {
+		for (size_t i = 0; i < val->vec.count; i++) {
+			val_decref(val->vec.elems[i]);
+		}
+		free(val->vec.elems);
+	}
+
+	if (val->kind == FLAMINGO_VAL_KIND_MAP) {
+		for (size_t i = 0; i < val->map.count; i++) {
+			val_decref(val->map.keys[i]);
+			val_decref(val->map.vals[i]);
+		}
+		free(val->map.keys);
+		free(val->map.vals);
+	}
+
+	if (val->kind == FLAMINGO_VAL_KIND_FN) {
+		free(val->fn.body);
+		free(val->fn.params);
+		if (val->fn.env != NULL) {
+			env_free(val->fn.env);
+		}
+	}
+
+	if (val->kind == FLAMINGO_VAL_KIND_INST) {
+		scope_decref(val->inst.scope);
+
+		if (val->inst.free_data != NULL) {
+			val->inst.free_data(val, val->inst.data);
+		}
+	}
+
+	free(val);
 }

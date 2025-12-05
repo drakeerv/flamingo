@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void scope_free(flamingo_scope_t* scope);
+
 static flamingo_val_t* val_incref(flamingo_val_t* val) {
 	assert(val->ref_count > 0); // value has already been freed
 	val->ref_count++;
@@ -88,6 +90,15 @@ static flamingo_val_t* val_alloc(void) {
 	return val_init(val);
 }
 
+static char* val_strndup(const char* s, size_t n) {
+	char* p = malloc(n + 1);
+	if (p) {
+		memcpy(p, s, n);
+		p[n] = '\0';
+	}
+	return p;
+}
+
 static flamingo_val_t* val_copy(flamingo_val_t* val) {
 	flamingo_val_t* const copy = calloc(1, sizeof *copy);
 	assert(copy != NULL);
@@ -95,10 +106,9 @@ static flamingo_val_t* val_copy(flamingo_val_t* val) {
 	memcpy(copy, val, sizeof *val);
 	copy->ref_count = 1;
 
-	if (val->name != NULL) {
-		copy->name = strndup(val->name, val->name_size);
-		assert(copy->name != NULL);
-	}
+	// Don't copy the name! Values are anonymous by default.
+	copy->name = NULL;
+	copy->name_size = 0;
 
 	switch (copy->kind) {
 	case FLAMINGO_VAL_KIND_NONE:
@@ -106,12 +116,36 @@ static flamingo_val_t* val_copy(flamingo_val_t* val) {
 	case FLAMINGO_VAL_KIND_INT:
 		break;
 	case FLAMINGO_VAL_KIND_STR:
-		copy->str.str = strndup(val->str.str, val->str.size);
+		copy->str.str = val_strndup(val->str.str, val->str.size);
 		assert(copy->str.str != NULL);
 		break;
 	case FLAMINGO_VAL_KIND_VEC:
+		copy->vec.elems = malloc(val->vec.count * sizeof *copy->vec.elems);
+		assert(copy->vec.elems != NULL);
+
+		for (size_t i = 0; i < val->vec.count; i++) {
+			copy->vec.elems[i] = val_copy(val->vec.elems[i]);
+		}
+		break;
 	case FLAMINGO_VAL_KIND_MAP:
+		copy->map.keys = malloc(val->map.count * sizeof *copy->map.keys);
+		assert(copy->map.keys != NULL);
+
+		copy->map.vals = malloc(val->map.count * sizeof *copy->map.vals);
+		assert(copy->map.vals != NULL);
+
+		for (size_t i = 0; i < val->map.count; i++) {
+			copy->map.keys[i] = val_copy(val->map.keys[i]);
+			copy->map.vals[i] = val_copy(val->map.vals[i]);
+		}
+		break;
 	case FLAMINGO_VAL_KIND_FN:
+		if (val->fn.body != NULL) {
+			copy->fn.body = malloc(sizeof(TSNode));
+			assert(copy->fn.body != NULL);
+			memcpy(copy->fn.body, val->fn.body, sizeof(TSNode));
+		}
+		break;
 	case FLAMINGO_VAL_KIND_INST:
 		// TODO
 		break;
@@ -198,25 +232,7 @@ static bool val_eq(flamingo_val_t* x, flamingo_val_t* y) {
 	return false; // XXX To make GCC happy.
 }
 
-static void val_free(flamingo_val_t* val) {
-	if (val->kind == FLAMINGO_VAL_KIND_STR) {
-		free(val->str.str);
-	}
-
-	if (val->kind == FLAMINGO_VAL_KIND_FN) {
-		free(val->fn.body);
-	}
-
-	if (val->kind == FLAMINGO_VAL_KIND_INST) {
-		scope_free(val->inst.scope);
-
-		if (val->inst.free_data != NULL) {
-			val->inst.free_data(val, val->inst.data);
-		}
-	}
-
-	// TODO when should the memory pointed to by val itself be freed?
-}
+void val_free(flamingo_val_t* val);
 
 static flamingo_val_t* val_decref(flamingo_val_t* val) {
 	if (val == NULL) {
